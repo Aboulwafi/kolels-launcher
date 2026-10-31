@@ -1,5 +1,5 @@
 
-name: Build Koleos Launcher APK
+name: Build Koleos Launcher
 
 on:
   workflow_dispatch:
@@ -16,27 +16,42 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # 1. Récupération du projet
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install Java 17
+      # 2. Installation de Java
+      - name: Setup JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
 
+      # 3. Installation du SDK Android
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      # 4. Acceptation automatique des licences
+      - name: Accept Android SDK licenses
+        shell: bash
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
+
+      # 5. Installation des composants Android
+      - name: Install Android SDK components
+        run: |
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            "platform-tools" \
+            "platforms;android-35" \
+            "build-tools;35.0.0"
+
+      # 6. Configuration de Gradle
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install Android SDK
-        run: |
-          sdkmanager "platforms;android-35" "build-tools;35.0.0"
-
+      # 7. Création du projet Android
       - name: Generate Android project
         shell: bash
         run: |
@@ -50,6 +65,7 @@ jobs:
                   gradlePluginPortal()
               }
           }
+
           dependencyResolutionManagement {
               repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
               repositories {
@@ -57,6 +73,7 @@ jobs:
                   mavenCentral()
               }
           }
+
           rootProject.name = "KoleosLauncher"
           include(":app")
           EOF
@@ -67,11 +84,6 @@ jobs:
               id("org.jetbrains.kotlin.android") version "2.0.21" apply false
               id("org.jetbrains.kotlin.plugin.compose") version "2.0.21" apply false
           }
-          EOF
-
-          cat > gradle.properties <<'EOF'
-          android.useAndroidX=true
-          org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
           EOF
 
           cat > app/build.gradle.kts <<'EOF'
@@ -93,8 +105,10 @@ jobs:
                   versionName = "1.0"
               }
 
-              buildFeatures {
-                  compose = true
+              buildTypes {
+                  release {
+                      isMinifyEnabled = false
+                  }
               }
 
               compileOptions {
@@ -105,15 +119,19 @@ jobs:
               kotlinOptions {
                   jvmTarget = "17"
               }
+
+              buildFeatures {
+                  compose = true
+              }
           }
 
           dependencies {
               implementation(platform("androidx.compose:compose-bom:2024.12.01"))
-              implementation("androidx.activity:activity-compose:1.10.0")
+              implementation("androidx.activity:activity-compose:1.9.3")
               implementation("androidx.compose.ui:ui")
               implementation("androidx.compose.ui:ui-tooling-preview")
               implementation("androidx.compose.material3:material3")
-              implementation("androidx.compose.animation:animation")
+              implementation("androidx.compose.material:material-icons-extended")
               debugImplementation("androidx.compose.ui:ui-tooling")
           }
           EOF
@@ -121,24 +139,19 @@ jobs:
           cat > app/src/main/AndroidManifest.xml <<'EOF'
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-              <queries>
-                  <package android:name="com.spotify.music"/>
-                  <package android:name="com.google.android.apps.maps"/>
-                  <package android:name="com.waze"/>
-              </queries>
-
               <application
-                  android:theme="@android:style/Theme.Material.Light.NoActionBar"
+                  android:allowBackup="true"
                   android:label="Koleos Launcher"
-                  android:allowBackup="true">
+                  android:theme="@android:style/Theme.Material.NoActionBar"
+                  android:usesCleartextTraffic="false">
 
                   <activity
                       android:name=".MainActivity"
                       android:exported="true">
 
                       <intent-filter>
-                          <action android:name="android.intent.action.MAIN"/>
-                          <category android:name="android.intent.category.LAUNCHER"/>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
                       </intent-filter>
 
                   </activity>
@@ -149,328 +162,168 @@ jobs:
           cat > app/src/main/java/com/koleos/launcher/MainActivity.kt <<'EOF'
           package com.koleos.launcher
 
-          import android.os.Bundle
           import android.content.Intent
+          import android.net.Uri
+          import android.os.Bundle
           import androidx.activity.ComponentActivity
           import androidx.activity.compose.setContent
-          import androidx.compose.animation.*
-          import androidx.compose.animation.core.*
-          import androidx.compose.foundation.*
+          import androidx.compose.foundation.background
           import androidx.compose.foundation.layout.*
           import androidx.compose.foundation.shape.RoundedCornerShape
           import androidx.compose.material3.*
-          import androidx.compose.runtime.*
-          import androidx.compose.ui.*
-          import androidx.compose.ui.graphics.*
+          import androidx.compose.runtime.Composable
+          import androidx.compose.ui.Alignment
+          import androidx.compose.ui.Modifier
+          import androidx.compose.ui.graphics.Color
           import androidx.compose.ui.text.font.FontWeight
           import androidx.compose.ui.text.style.TextAlign
-          import androidx.compose.ui.unit.*
-          import kotlinx.coroutines.delay
-
-          private val Blue = Color(0xFF55C7ED)
-          private val Dark = Color(0xFF070B11)
-          private val Panel = Color(0xFF14202D)
+          import androidx.compose.ui.unit.dp
+          import androidx.compose.ui.unit.sp
 
           class MainActivity : ComponentActivity() {
 
               override fun onCreate(savedInstanceState: Bundle?) {
                   super.onCreate(savedInstanceState)
 
-                  window.statusBarColor =
-                      android.graphics.Color.rgb(7, 11, 17)
-
-                  window.navigationBarColor =
-                      android.graphics.Color.rgb(7, 11, 17)
-
                   setContent {
-                      KoleosApp()
+                      KoleosApp(
+                          onSpotify = { openApp("com.spotify.music") },
+                          onMaps = { openApp("com.google.android.apps.maps") },
+                          onWaze = { openApp("com.waze") }
+                      )
                   }
+              }
+
+              private fun openApp(packageName: String) {
+                  val intent = packageManager.getLaunchIntentForPackage(packageName)
+                      ?: Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=$packageName"))
+
+                  startActivity(intent)
               }
           }
 
           @Composable
-          fun KoleosApp() {
-              var intro by remember { mutableStateOf(true) }
+          fun KoleosApp(
+              onSpotify: () -> Unit,
+              onMaps: () -> Unit,
+              onWaze: () -> Unit
+          ) {
+              val background = Color(0xFF080B10)
+              val gold = Color(0xFFC7A66A)
+              val white = Color(0xFFF4F2ED)
 
-              MaterialTheme(
-                  colorScheme = darkColorScheme(
-                      primary = Blue,
-                      background = Dark,
-                      surface = Panel
-                  )
-              ) {
-                  Surface(
-                      modifier = Modifier.fillMaxSize(),
-                      color = Dark
-                  ) {
-                      AnimatedContent(
-                          targetState = intro,
-                          label = "launcher"
-                      ) { opening ->
-                          if (opening) {
-                              IntroScreen {
-                                  intro = false
-                              }
-                          } else {
-                              HomeScreen()
-                          }
-                      }
-                  }
-              }
-          }
-
-          @Composable
-          fun IntroScreen(onFinish: () -> Unit) {
-
-              var progress by remember {
-                  mutableFloatStateOf(0f)
-              }
-
-              LaunchedEffect(Unit) {
-                  while (progress < 1f) {
-                      progress = (progress + 0.012f)
-                          .coerceAtMost(1f)
-                      delay(16)
-                  }
-                  delay(500)
-                  onFinish()
-              }
-
-              Box(
-                  modifier = Modifier
-                      .fillMaxSize()
-                      .background(
-                          Brush.verticalGradient(
-                              listOf(
-                                  Color.Black,
-                                  Color(0xFF142638),
-                                  Dark
-                              )
-                          )
-                      ),
-                  contentAlignment = Alignment.Center
-              ) {
-
+              MaterialTheme {
                   Column(
-                      horizontalAlignment = Alignment.CenterHorizontally
-                  ) {
-
-                      Text(
-                          "RENAULT",
-                          color = Color.LightGray,
-                          fontSize = 13.sp,
-                          letterSpacing = 8.sp
-                      )
-
-                      Spacer(Modifier.height(15.dp))
-
-                      Text(
-                          "◇",
-                          color = Blue,
-                          fontSize = 75.sp
-                      )
-
-                      Text(
-                          "KOLEOS",
-                          color = Color.White,
-                          fontSize = 38.sp,
-                          fontWeight = FontWeight.Light,
-                          letterSpacing = 9.sp
-                      )
-
-                      Text(
-                          "LAUNCHER 2023",
-                          color = Blue,
-                          fontSize = 11.sp,
-                          letterSpacing = 5.sp
-                      )
-
-                      Spacer(Modifier.height(35.dp))
-
-                      LinearProgressIndicator(
-                          progress = { progress },
-                          modifier = Modifier.width(160.dp),
-                          color = Blue
-                      )
-                  }
-
-                  TextButton(
-                      onClick = onFinish,
                       modifier = Modifier
-                          .align(Alignment.TopEnd)
-                          .padding(15.dp)
+                          .fillMaxSize()
+                          .background(background)
+                          .padding(24.dp),
+                      horizontalAlignment = Alignment.CenterHorizontally,
+                      verticalArrangement = Arrangement.SpaceBetween
                   ) {
-                      Text("PASSER", color = Color.Gray)
-                  }
-              }
-          }
 
-          @Composable
-          fun HomeScreen() {
+                      Spacer(modifier = Modifier.height(20.dp))
 
-              val context = androidx.compose.ui.platform.LocalContext.current
-
-              var message by remember {
-                  mutableStateOf("Votre espace de conduite")
-              }
-
-              Column(
-                  modifier = Modifier
-                      .fillMaxSize()
-                      .background(Dark)
-                      .verticalScroll(rememberScrollState())
-                      .padding(22.dp),
-                  verticalArrangement = Arrangement.spacedBy(20.dp)
-              ) {
-
-                  Text(
-                      "KOLEOS",
-                      color = Color.White,
-                      fontSize = 30.sp,
-                      letterSpacing = 7.sp
-                  )
-
-                  Text(
-                      "2023  •  TECHNO  •  BLACK",
-                      color = Blue,
-                      fontSize = 11.sp,
-                      letterSpacing = 2.sp
-                  )
-
-                  Box(
-                      modifier = Modifier
-                          .fillMaxWidth()
-                          .height(185.dp)
-                          .background(
-                              Brush.linearGradient(
-                                  listOf(
-                                      Color(0xFF24394D),
-                                      Color(0xFF101720)
-                                  )
-                              ),
-                              RoundedCornerShape(22.dp)
-                          ),
-                      contentAlignment = Alignment.Center
-                  ) {
-                      Column(
-                          horizontalAlignment = Alignment.CenterHorizontally
-                      ) {
+                      Column(horizontalAlignment = Alignment.CenterHorizontally) {
                           Text(
-                              "◇",
-                              color = Blue,
-                              fontSize = 65.sp
+                              "RENAULT",
+                              color = gold,
+                              fontSize = 15.sp,
+                              letterSpacing = 6.sp
                           )
+
+                          Spacer(modifier = Modifier.height(8.dp))
+
                           Text(
-                              "YOUR KOLEOS",
-                              color = Color.White,
-                              fontSize = 20.sp,
-                              letterSpacing = 4.sp
+                              "KOLEOS",
+                              color = white,
+                              fontSize = 38.sp,
+                              fontWeight = FontWeight.Light,
+                              letterSpacing = 8.sp
                           )
+
                           Text(
-                              "BLACK EDITION",
-                              color = Blue,
+                              "II  •  TECHNO  •  2023",
+                              color = gold,
                               fontSize = 11.sp,
                               letterSpacing = 3.sp
                           )
                       }
-                  }
 
-                  Text(message, color = Color.LightGray)
+                      Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                          Text(
+                              "◆",
+                              color = gold,
+                              fontSize = 100.sp
+                          )
 
-                  LauncherButton("MUSIC", "Spotify") {
-                      message = openApp(
-                          context,
-                          "com.spotify.music",
-                          "Spotify"
+                          Text(
+                              "YOUR JOURNEY STARTS HERE",
+                              color = white,
+                              fontSize = 11.sp,
+                              letterSpacing = 2.sp,
+                              textAlign = TextAlign.Center
+                          )
+                      }
+
+                      Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                          LauncherButton("SPOTIFY", onSpotify, gold)
+                          LauncherButton("GOOGLE MAPS", onMaps, white)
+                          LauncherButton("WAZE", onWaze, white)
+                      }
+
+                      Text(
+                          "KOLEOS LAUNCHER  •  VERSION 1.0",
+                          color = Color.Gray,
+                          fontSize = 10.sp,
+                          letterSpacing = 1.sp
                       )
                   }
-
-                  LauncherButton("NAVIGATION", "Google Maps") {
-                      message = openApp(
-                          context,
-                          "com.google.android.apps.maps",
-                          "Google Maps"
-                      )
-                  }
-
-                  LauncherButton("WAZE", "Navigation") {
-                      message = openApp(
-                          context,
-                          "com.waze",
-                          "Waze"
-                      )
-                  }
-
-                  Text(
-                      "KOLEOS LAUNCHER • VERSION 1.0",
-                      color = Color.Gray,
-                      fontSize = 10.sp,
-                      textAlign = TextAlign.Center,
-                      modifier = Modifier.fillMaxWidth()
-                  )
               }
           }
 
           @Composable
           fun LauncherButton(
-              title: String,
-              subtitle: String,
-              onClick: () -> Unit
+              label: String,
+              onClick: () -> Unit,
+              color: Color
           ) {
-              Column(
+              Button(
+                  onClick = onClick,
                   modifier = Modifier
                       .fillMaxWidth()
-                      .background(
-                          Panel,
-                          RoundedCornerShape(18.dp)
-                      )
-                      .clickable { onClick() }
-                      .padding(20.dp)
+                      .height(58.dp),
+                  shape = RoundedCornerShape(12.dp),
+                  colors = ButtonDefaults.buttonColors(
+                      containerColor = Color(0xFF202630),
+                      contentColor = color
+                  )
               ) {
                   Text(
-                      title,
-                      color = Blue,
-                      fontWeight = FontWeight.Bold,
-                      fontSize = 15.sp,
-                      letterSpacing = 2.sp
+                      label,
+                      fontSize = 14.sp,
+                      letterSpacing = 2.sp,
+                      fontWeight = FontWeight.Medium
                   )
-                  Text(
-                      subtitle,
-                      color = Color.White,
-                      fontSize = 12.sp
-                  )
-              }
-          }
-
-          fun openApp(
-              context: android.content.Context,
-              packageName: String,
-              name: String
-          ): String {
-              val intent = context.packageManager
-                  .getLaunchIntentForPackage(packageName)
-
-              return if (intent != null) {
-                  context.startActivity(intent)
-                  "$name ouvert"
-              } else {
-                  "$name n'est pas installé"
               }
           }
           EOF
 
-      - name: Build APK
-        run: gradle --no-daemon :app:assembleDebug
+      # 8. Compilation de l'application
+      - name: Build debug APK
+        run: gradle --no-daemon assembleDebug
 
+      # 9. Vérification de l'APK
       - name: Verify APK
         run: |
           test -f app/build/outputs/apk/debug/app-debug.apk
           ls -lh app/build/outputs/apk/debug/app-debug.apk
 
+      # 10. Publication de l'APK
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: KoleosLauncher-APK
+          name: Koleos-Launcher-APK
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 30
